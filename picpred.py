@@ -123,12 +123,9 @@ net_params = read_net_params(params_file)
 input_dim1 = (15,20) #20 AA*15 residues
 input_dim2 = (1,42) #42 types of alleles
 num_classes = max(bins.shape)
-kernel_size =  20 #The number of aa
-#The length of the binding grove
+kernel_size =  9 #The length of the conserved part that should bind to the binding grove
 
 #Variable params
-base_epochs = 10#int(net_params['base_epochs'])
-finish_epochs = 2 #int(net_params['finish_epochs'])
 filters =  10#int(net_params['filters']) # Dimension of the embedding vector.
 
 batch_size = 32 #int(net_params['batch_size'])
@@ -139,7 +136,7 @@ step_size = 5 #should increase alot - maybe 5?
 num_cycles = 3
 num_epochs = step_size*2*num_cycles
 num_steps = int(len(train_df)/batch_size)
-max_lr = 0.0015
+max_lr = 0.01
 min_lr = max_lr/10
 lr_change = (max_lr-min_lr)/step_size  #(step_size*num_steps) #How mauch to change each batch
 lrate = min_lr
@@ -148,51 +145,21 @@ in_1 = keras.Input(shape = input_dim1)
 in_2 = keras.Input(shape = input_dim2)
 
 #Convolution on aa encoding
-in_1_conv = Conv1D(filters = filters, kernel_size = kernel_size, input_shape=input_dim1, padding ="same")(in_1) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
+x = Conv1D(filters = filters, kernel_size = kernel_size, input_shape=input_dim1, padding ="same")(in_1) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
+#take steps of 1 doing 9+20 convolutions using filters number of filters
+x = BatchNormalization()(x) #Bacth normalize, focus on segment
+x = Activation('relu')(x)
 
-batch_out1 = BatchNormalization()(x) #Bacth normalize, focus on segment
-		activation1 = Activation('relu')(batch_out1)
-		conv_out1 = Conv1D(filters = filters, kernel_size = kernel_size, dilation_rate = dilation_rate, input_shape=input_dim, padding ="same")(activation1)
-		batch_out2 = BatchNormalization()(conv_out1) #Bacth normalize, focus on segment
-		activation2 = Activation('relu')(batch_out2)
-        #Downsample - half filters
-		conv_out2 = Conv1D(filters = int(filters/2), kernel_size = kernel_size, dilation_rate = 1, input_shape=input_dim, padding ="same")(activation2)
-		x = Conv1D(filters = int(filters/2), kernel_size = kernel_size, dilation_rate = 1, input_shape=input_dim, padding ="same")(x)
-		x = add([x, conv_out2]) #Skip connection
+#Flatten for concatenation
+flat1 = Flatten()(x)  #Flatten
+flat2 = Flatten()(in_2)  #Flatten
 
-
-
-	return x
-
-
-#Output (batch, steps(len), filters), filters = channels in next
-x1 = resnet(in_1_conv, num_res_blocks)
-x2 = resnet(in_2_conv, num_res_blocks)
-
-#Maxpool along sequence axis
-maxpool1 = MaxPooling1D(pool_size=seq_length)(x1)
-maxpool2 = MaxPooling1D(pool_size=seq_length)(x2)
-#cat = concatenate([maxpool1, maxpool2]) #Cat convolutions
-
-flat1 = Flatten()(maxpool1)  #Flatten
-flat2 = Flatten()(maxpool2)  #Flatten
-
-#Should have sum of two losses:
-#1. How closely the predicted lddt matches the real one
-#2. How closely the probability distribution of the bins match a gaussian distribution (kl divergence)
-#Perhaps I should try to predict the deviation from the mean, since the scores are so centered around the mean.
-# Add a customized layer to compute the absolute difference between the encodings
-L1_layer = Lambda(lambda tensors:abs(tensors[0] - tensors[1]))
-L1_distance = L1_layer([flat1, flat2])
-
-# Add a customized layer to compute the absolute difference between the encodings
-#L2_layer = Lambda(lambda tensors:keras.backend.sqrt(keras.backend.square(tensors[0] - tensors[1])))
-#L2_distance = L2_layer([flat1, flat2])
+merge = concatenate([flat1, flat2])
 #Dense final layer for classification
-
-probabilities = Dense(num_classes, activation='softmax')(L1_distance)
+probabilities = Dense(num_classes, activation='softmax')(merge)
 bins_K = variable(value=bins)
 
+#Multiply the probabilities with the bins --> gives larger freedom in assigning values
 def multiply(x):
   return tf.matmul(x, bins_K,transpose_b=True)
 
@@ -204,26 +171,12 @@ pred_vals = Lambda(multiply)(probabilities)
 def bin_loss(y_true, y_pred):
   #Shold make this a log loss
         g_loss = mean_absolute_error(y_true, y_pred) #general, compare difference
-	#log_g_loss = keras.backend.log(g_loss/100)
-  #Gauss for loss
-	#gauss = keras.backend.random_normal_variable(shape=(batch_size, 1), mean=0.7, scale=0.3) # Gaussian distribution, scale: Float, standard deviation of the normal distribution.
-        kl_loss = keras.losses.kullback_leibler_divergence(y_true, y_pred) #better than comparing to gaussian
+	    kl_loss = keras.losses.kullback_leibler_divergence(y_true, y_pred) #better than comparing to gaussian?
         sum_kl_loss = keras.backend.sum(kl_loss, axis =0)
         sum_g_loss = keras.backend.sum(g_loss, axis =0)
         sum_g_loss = sum_g_loss*alpha #This is basically a loss penalty
 
-
-        # #Normalize due to proportion
-        # kl_p = sum_kl_loss/(sum_g_loss+sum_kl_loss)
-        # g_p = sum_g_loss/(sum_g_loss+sum_kl_loss)
-
-        # sum_kl_loss = sum_kl_loss/kl_p
-        # sum_g_loss = sum_g_loss/g_p
         loss = sum_g_loss+sum_kl_loss
-        #Scale with R? loss = loss/R - on_batch_end
-  	#Normalize loss by percentage contributions: divide by contribution
-  	#Write batch generator to avoid incompatibility in shapes
-  	#problem at batch end due to kongruens
         return loss
 
 #Custom validation loss
@@ -251,7 +204,7 @@ class IntervalEvaluation(Callback):
 #Model: define inputs and outputs
 model = Model(inputs = [in_1, in_2], outputs = pred_vals)
 opt = optimizers.Adam(clipnorm=1., lr = lrate) #remove clipnorm and add loss penalty - clipnorm works better
-model.compile(loss=bin_loss,
+model.compile(loss='categorical_crossentropy',
               optimizer=opt)
 
 

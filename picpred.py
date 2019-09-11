@@ -146,7 +146,7 @@ batch_size = 32 #int(net_params['batch_size'])
 #lr opt
 find_lr = 0
 #LR schedule
-step_size = 5 #should increase alot - maybe 5?
+step_size = 10 #should increase alot - maybe 5?
 num_cycles = 3
 num_epochs = step_size*2*num_cycles
 num_steps = int(len(X1_train)/batch_size)
@@ -276,4 +276,3 @@ pred = np.argmax(pred, axis = 1)
 true = np.argmax(y_test, axis = 1)
 np.save(out_dir+'true.npy', true)
 np.save(out_dir+'pred.npy', pred)
-pdb.set_trace()

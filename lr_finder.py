@@ -37,7 +37,7 @@ class LRFinder:
         # Increase the learning rate for the next batch
         lr *= self.lr_mult
         K.set_value(self.model.optimizer.lr, lr)
-        print(' ',lr)
+        #print(' ',lr)
 
     def find(self, x_train, y_train, start_lr, end_lr, batch_size=64, epochs=1):
         num_batches = epochs * x_train[0].shape[0] / batch_size

@@ -26,7 +26,7 @@ from tensorflow.keras.layers import Dense, Dropout, Activation, Conv1D, Reshape,
 from tensorflow.keras.layers import Activation, RepeatVector, Permute, multiply, Lambda, GlobalAveragePooling1D
 from tensorflow.keras.layers import concatenate, add, Conv1D, BatchNormalization, Flatten, Subtract
 from tensorflow.keras.backend import epsilon, clip, get_value, set_value, transpose, variable, square
-
+from tensorflow.keras.losses import mean_absolute_error
 
 
 #visualization
@@ -96,12 +96,12 @@ out_dir = args.out_dir[0]
 df = pd.read_csv(df_path)
 #Get pic50 values
 pic50 = -np.log10(df['measurement_value'])
-bins = np.array([-5.47712125, -4.77712125, -4.07712125, -3.37712125, -2.7,
+bins = np.array([-5.47712125, -4.77712125, -4.07712125, -3.37712125, -2.69897,
        -1.97712125, -1.27712125, -0.57712125,  0.12287875,  0.82287875])
 
 #Bin the pic50 values
-y = np.digitize(pic50,bins)
-
+y_binned = np.digitize(pic50,bins)
+y = pic50
 X1 =[]
 max_length = 25 #Goes from 15-25
 for enc in aa_enc:
@@ -113,7 +113,7 @@ X2 = np.asarray(df['allele_enc'])
 X2 = np.expand_dims(X2, axis=1)
 #different splits
 sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=0)
-for train_index, test_index in sss.split(X2, y):
+for train_index, test_index in sss.split(X2, y_binned):
     X1_train, X1_test = X1[train_index], X1[test_index]
     X2_train, X2_test = X2[train_index], X2[test_index]
     y_train, y_test = y[train_index], y[test_index]
@@ -124,8 +124,8 @@ X2_train = np.eye(42)[X2_train]
 X2_test = np.eye(42)[X2_test]
 
 #onehot encode y train and test
-y_train = np.eye(bins.size+1)[y_train]
-y_test = np.eye(bins.size+1)[y_test]
+#y_train = np.eye(bins.size+1)[y_train]
+#y_test = np.eye(bins.size+1)[y_test]
 #Tensorboard for logging and visualization
 log_name = str(time.time())
 tensorboard = TensorBoard(log_dir=out_dir+log_name)
@@ -136,17 +136,19 @@ tensorboard = TensorBoard(log_dir=out_dir+log_name)
 #net_params = read_net_params(params_file)
 input_dim1 = (25,20) #20 AA*25 residues
 input_dim2 = (1, 42) #42 types of alleles
-num_classes = max(bins.shape)+1
+num_classes = max(bins.shape)
 kernel_size =  9 #The length of the conserved part that should bind to the binding grove
 
 #Variable params
-filters =  10#int(net_params['filters']) # Dimension of the embedding vector.
-
+filters =  100#int(net_params['filters']) # Dimension of the embedding vector.
 batch_size = 32 #int(net_params['batch_size'])
+
+#Attention size
+attention_size = filters*17+42
 #lr opt
 find_lr = 0
 #LR schedule
-step_size = 10 #should increase alot - maybe 5?
+step_size = 5 #should increase alot - maybe 5?
 num_cycles = 3
 num_epochs = step_size*2*num_cycles
 num_steps = int(len(X1_train)/batch_size)
@@ -175,12 +177,12 @@ x = concatenate([flat1, flat2])
 #Attention layer - information will be redistributed in the backwards pass
 attention = Dense(1, activation='tanh')(x) #Normalize and extract info with tanh activated weight matrix (hidden attention weights)
 attention = Flatten()(attention) #Make 1D
-attention = Activation('softmax')(attention) #Softmax on all activations (normalize activations)
-attention = RepeatVector(212)(attention) #Repeats the input "num_nodes" times.
+attention = Activation('tanh')(attention) #Softmax on all activations (normalize activations)
+attention = RepeatVector(attention_size)(attention) #Repeats the input "num_nodes" times.
 attention = Permute([2, 1])(attention) #Permutes the dimensions of the input according to a given pattern. (permutes pos 2 and 1 of attention)
 
 sent_representation = multiply([x, attention]) #Multiply input to attention with normalized activations
-sent_representation = Lambda(lambda xin: keras.backend.sum(xin, axis=-2), output_shape=(212,))(sent_representation) #Sum all attentions
+sent_representation = Lambda(lambda xin: keras.backend.sum(xin, axis=-2), output_shape=(attention_size,))(sent_representation) #Sum all attentions
 
 #Dense final layer for classification
 probabilities = Dense(num_classes, activation='softmax')(sent_representation)
@@ -192,27 +194,25 @@ bins_K = variable(value=bins)
 def multiply(x):
   return tf.matmul(x, bins_K,transpose_b=True)
 
-#pred_vals = Lambda(multiply)(probabilities)
-#The length of the validation data must be a multiple of batch size!
-#Other wise you will have shape mismatches
+pred_vals = Lambda(multiply)(probabilities)
+
 
 #Custom loss
 def bin_loss(y_true, y_pred):
   #Shold make this a log loss
-	g_loss = mean_absolute_error(y_true, y_pred) #general, compare difference
+	g_loss = (y_true-y_pred)**2 #general, compare difference
 	kl_loss = keras.losses.kullback_leibler_divergence(y_true, y_pred) #better than comparing to gaussian?
 	sum_kl_loss = keras.backend.sum(kl_loss, axis =0)
 	sum_g_loss = keras.backend.sum(g_loss, axis =0)
-	sum_g_loss = sum_g_loss*alpha #This is basically a loss penalty
-
+	sum_g_loss = sum_g_loss*10 #This is basically a loss penalty
 	loss = sum_g_loss+sum_kl_loss
 	return loss
 
 
 #Model: define inputs and outputs
-model = Model(inputs = [in_1, in_2], outputs = probabilities)#pred_vals)
+model = Model(inputs = [in_1, in_2], outputs = pred_vals) #probabilities)#
 opt = optimizers.Adam(clipnorm=1., lr = lrate) #remove clipnorm and add loss penalty - clipnorm works better
-model.compile(loss='categorical_crossentropy',
+model.compile(loss=bin_loss, #'categorical_crossentropy',
               optimizer=opt,
               metrics = ['accuracy'])
 
@@ -252,13 +252,19 @@ lrate = LRschedule()
 
 
 #Checkpoint
-filepath=out_dir+"weights-{epoch:02d}-.hdf5"
+filepath=out_dir+"weights-{epoch:02d}.hdf5"
 checkpoint = ModelCheckpoint(filepath, verbose=1, save_best_only=False)
 
 #Summary of model
 print(model.summary())
 
 callbacks=[lrate, tensorboard, checkpoint]
+
+#from tensorflow.keras.models import model_from_json
+#serialize model to JSON
+model_json = model.to_json()
+with open(out_dir+"model.json", "w") as json_file:
+    json_file.write(model_json)
 
 #Fit model
 model.fit(x = [X1_train, X2_train],
@@ -272,7 +278,8 @@ model.fit(x = [X1_train, X2_train],
 
 #Convert binned predictions to binary
 pred = model.predict([X1_test, X2_test])
-pred = np.argmax(pred, axis = 1)
-true = np.argmax(y_test, axis = 1)
-np.save(out_dir+'true.npy', true)
-np.save(out_dir+'pred.npy', pred)
+#pred = np.argmax(pred, axis = 1)
+#true = np.argmax(y_test, axis = 1)
+np.save(out_dir+'true.npy', y_test)
+np.save(out_dir+'pred.npy', pred[:,0])
+pdb.set_trace()

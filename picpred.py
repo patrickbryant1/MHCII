@@ -162,7 +162,7 @@ in_2 = keras.Input(shape = input_dim2)
 x = Conv1D(filters = filters, kernel_size = kernel_size, input_shape=input_dim1, padding ="valid")(in_1) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
 #take steps of 1 doing 9+20 convolutions using filters number of filters
 x = BatchNormalization()(x) #Bacth normalize, focus on segment
-x = Activation('relu')(x)
+x = Activation('softmax')(x)
 
 #Flatten for concatenation
 flat1 = Flatten()(x)  #Flatten

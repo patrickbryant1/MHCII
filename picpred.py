@@ -42,6 +42,8 @@ parser.add_argument('dataframe', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to df.')
 parser.add_argument('aa_encodings', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with amino acid encodings')
+parser.add_argument('allele_emb', nargs=1, type= str,
+                  default=sys.stdin, help = 'Path to file with allele embeddings')
 #parser.add_argument('params_file', nargs=1, type= str,
 #                  default=sys.stdin, help = 'Path to file with net parameters')
 parser.add_argument('out_dir', nargs=1, type= str,
@@ -88,6 +90,7 @@ def pad(ar, x, y):
 args = parser.parse_args()
 df_path = args.dataframe[0]
 aa_enc = np.load(args.aa_encodings[0], allow_pickle = True)
+allele_embs = args.allele_emb[0]
 #params_file = args.params_file[0]
 out_dir = args.out_dir[0]
 
@@ -112,6 +115,12 @@ for i in range(len(X1)):
     X1[i] = pad(X1[i], max_length, 20)
 
 X1 = np.array(X1)
+
+#Get allele encodings
+filename = file.split('/')[-1].split('.')[0]
+    emb = np.load(file, allow_pickle = True)
+    allele_embs[name] = emb
+pdb.set_trace()
 X2 = np.asarray(df['allele_enc'])
 X2 = np.expand_dims(X2, axis=1)
 #different splits

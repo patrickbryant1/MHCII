@@ -112,10 +112,10 @@ for i in range(len(X1)):
     X1[i] = pad(X1[i], max_length, 20)
 
 X1 = np.array(X1)
-pdb.set_trace()
 X2 = np.asarray(df['allele_enc'])
 X2 = np.expand_dims(X2, axis=1)
 #different splits
+y= y_binned
 sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=0)
 for train_index, test_index in sss.split(X2, y_binned):
     X1_train, X1_test = X1[train_index], X1[test_index]
@@ -128,8 +128,8 @@ X2_train = np.eye(42)[X2_train]
 X2_test = np.eye(42)[X2_test]
 
 #onehot encode y train and test
-#y_train = np.eye(bins.size+1)[y_train]
-#y_test = np.eye(bins.size+1)[y_test]
+y_train = np.eye(bins.size+1)[y_train]
+y_test = np.eye(bins.size+1)[y_test]
 #Tensorboard for logging and visualization
 log_name = str(time.time())
 tensorboard = TensorBoard(log_dir=out_dir+log_name)
@@ -140,7 +140,7 @@ tensorboard = TensorBoard(log_dir=out_dir+log_name)
 #net_params = read_net_params(params_file)
 input_dim1 = (25,20) #20 AA*25 residues
 input_dim2 = (1, 42) #42 types of alleles
-num_classes = max(bins.shape)
+num_classes = max(bins.shape)+1
 kernel_size =  9 #The length of the conserved part that should bind to the binding grove
 
 #Variable params
@@ -151,6 +151,8 @@ batch_size = 32 #int(net_params['batch_size'])
 attention_size = filters*17+42
 #lr opt
 find_lr = 0
+#loss
+loss = 'categorical_crossentropy'
 #LR schedule
 step_size = 5 #should increase alot - maybe 5?
 num_cycles = 3
@@ -168,7 +170,7 @@ in_2 = keras.Input(shape = input_dim2)
 x = Conv1D(filters = filters, kernel_size = kernel_size, input_shape=input_dim1, padding ="valid")(in_1) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
 #take steps of 1 doing 9+20 convolutions using filters number of filters
 x = BatchNormalization()(x) #Bacth normalize, focus on segment
-x = Activation('softmax')(x)
+x = Activation('relu')(x)
 
 #Flatten for concatenation
 flat1 = Flatten()(x)  #Flatten
@@ -192,14 +194,17 @@ sent_representation = Lambda(lambda xin: keras.backend.sum(xin, axis=-2), output
 probabilities = Dense(num_classes, activation='softmax')(sent_representation)
 #Dense final layer for classification
 #probabilities = Dense(num_classes, activation='softmax')(merge)
-bins_K = variable(value=bins)
+if loss == 'bin_loss':
+    bins_K = variable(value=bins)
 
-#Multiply the probabilities with the bins --> gives larger freedom in assigning values
-def multiply(x):
-  return tf.matmul(x, bins_K,transpose_b=True)
+    #Multiply the probabilities with the bins --> gives larger freedom in assigning values
+    def multiply(x):
+        return tf.matmul(x, bins_K,transpose_b=True)
 
-pred_vals = Lambda(multiply)(probabilities)
-
+        pred_vals = Lambda(multiply)(probabilities)
+        out_vals = pred_vals
+else:
+    out_vals = probabilities
 
 #Custom loss
 def bin_loss(y_true, y_pred):
@@ -214,9 +219,9 @@ def bin_loss(y_true, y_pred):
 
 
 #Model: define inputs and outputs
-model = Model(inputs = [in_1, in_2], outputs = pred_vals) #probabilities)#
+model = Model(inputs = [in_1, in_2], outputs = out_vals) #probabilities)#
 opt = optimizers.Adam(clipnorm=1., lr = lrate) #remove clipnorm and add loss penalty - clipnorm works better
-model.compile(loss=bin_loss, #'categorical_crossentropy',
+model.compile(loss=loss, #'categorical_crossentropy',
               optimizer=opt,
               metrics = ['accuracy'])
 
@@ -282,8 +287,8 @@ model.fit(x = [X1_train, X2_train],
 
 #Convert binned predictions to binary
 pred = model.predict([X1_test, X2_test])
-#pred = np.argmax(pred, axis = 1)
-#true = np.argmax(y_test, axis = 1)
-np.save(out_dir+'true.npy', y_test)
-np.save(out_dir+'pred.npy', pred[:,0])
+pred = np.argmax(pred, axis = 1)
+true = np.argmax(y_test, axis = 1)
+np.save(out_dir+'true.npy', true)
+np.save(out_dir+'pred.npy', pred)
 pdb.set_trace()

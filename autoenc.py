@@ -22,7 +22,7 @@ import tensorflow.keras as keras
 from tensorflow.keras.constraints import max_norm
 from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler, Callback
 from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Dense, Dropout, Activation, Conv1D, Reshape, MaxPooling1D, dot, Masking
+from tensorflow.keras.layers import Dense, Dropout, Activation, Conv1D, Reshape, MaxPooling1D, dot, Masking, UpSampling1D
 from tensorflow.keras.layers import Activation, RepeatVector, Permute, multiply, Lambda, GlobalAveragePooling1D
 from tensorflow.keras.layers import concatenate, add, Conv1D, BatchNormalization, Flatten, Subtract
 from tensorflow.keras.backend import epsilon, clip, get_value, set_value, transpose, variable, square
@@ -67,13 +67,14 @@ def read_net_params(params_file):
 
     return net_params
 
-def pad(ar, x):
-    '''Pads a 1D array to len x
+
+def pad(ar, x, y):
+    '''Pads a 2D array to len x
     '''
     shape = ar.shape
 
     if max(shape) < x:
-        empty = np.zeros((x))
+        empty = np.zeros((x,y))
         empty[0:len(ar)]=ar
         ar = empty
 
@@ -92,12 +93,11 @@ allele_enc = []
 for file in aa_enc_files:
     name = file.split('/')[-1]
     enc = np.load(name, allow_pickle = True)
-    enc = pad(enc, 266)
+    enc = np.eye(20)[enc]
+    enc = pad(enc, 266, 20)
     allele_enc.append(enc)
 
-allele_enc = np.asarray(allele_enc)
-#onehot encode allele_enc
-X = np.eye(20)[allele_enc]
+X = np.asarray(allele_enc)
 #Tensorboard for logging and visualization
 log_name = str(time.time())
 tensorboard = TensorBoard(log_dir=out_dir+log_name)
@@ -106,14 +106,13 @@ tensorboard = TensorBoard(log_dir=out_dir+log_name)
 ######MODEL######
 #Parameters
 #net_params = read_net_params(params_file)
-input_dim1 = (25,20) #20 AA*25 residues
-input_dim2 = (1, 42) #42 types of alleles
-num_classes = max(bins.shape)
-kernel_size =  9 #The length of the conserved part that should bind to the binding grove
+input_dim = (266,20) #20 AA*25 residues
 
-#Variable params
-filters =  100#int(net_params['filters']) # Dimension of the embedding vector.
-batch_size = 32 #int(net_params['batch_size'])
+kernel_size =  20 #20 aa
+stride = 1
+
+filters =  10
+batch_size = 32
 
 #Attention size
 attention_size = filters*17+42
@@ -129,62 +128,26 @@ min_lr = max_lr/10
 lr_change = (max_lr-min_lr)/step_size  #(step_size*num_steps) #How mauch to change each batch
 lrate = min_lr
 #MODEL
-in_1 = keras.Input(shape = input_dim1)
-in_2 = keras.Input(shape = input_dim2)
+input = keras.Input(shape = input_dim)
+
 
 #Convolution on aa encoding
-x = Conv1D(filters = filters, kernel_size = kernel_size, input_shape=input_dim1, padding ="valid")(in_1) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
-#take steps of 1 doing 9+20 convolutions using filters number of filters
-x = BatchNormalization()(x) #Bacth normalize, focus on segment
-x = Activation('softmax')(x)
-
-#Flatten for concatenation
-flat1 = Flatten()(x)  #Flatten
-flat2 = Flatten()(in_2)  #Flatten
-
-x = concatenate([flat1, flat2])
+x = Conv1D(activation='relu', filters = filters, kernel_size = kernel_size, dilation_rate = 2, input_shape=input_dim, padding ="same")(input)
+x = AveragePooling1D(data_format='channels_first')(x) #data_format='channels_first'
+x = Conv1D(activation='relu', filters = filters/2, kernel_size = kernel_size, dilation_rate = 2, input_shape=input_dim, padding ="same")(x)
+encoded = AveragePooling1D(data_format='channels_first')(x) #data_format='channels_first'
 
 
-#Attention layer
-#Attention layer - information will be redistributed in the backwards pass
-attention = Dense(1, activation='tanh')(x) #Normalize and extract info with tanh activated weight matrix (hidden attention weights)
-attention = Flatten()(attention) #Make 1D
-attention = Activation('tanh')(attention) #Softmax on all activations (normalize activations)
-attention = RepeatVector(attention_size)(attention) #Repeats the input "num_nodes" times.
-attention = Permute([2, 1])(attention) #Permutes the dimensions of the input according to a given pattern. (permutes pos 2 and 1 of attention)
+x = Conv1D(activation='relu', filters = filters/2, kernel_size = kernel_size, dilation_rate = 2, input_shape=input_dim, padding ="same")(encoded)
+x = UpSampling1D(size=2)(x) #Repeats each temporal step size times along the time axis.
+x = Conv1D(activation='relu', filters = filters, kernel_size = kernel_size, dilation_rate = 2, input_shape=input_dim, padding ="same")(in_1)
+x = UpSampling1D(size=2)(x) #Repeats each temporal step size times along the time axis.
+decoded = Conv1D(activation='sigmoid', filters = 20, kernel_size = kernel_size, dilation_rate = 2, input_shape=input_dim, padding ="same")(x)#20 aa
 
-sent_representation = multiply([x, attention]) #Multiply input to attention with normalized activations
-sent_representation = Lambda(lambda xin: keras.backend.sum(xin, axis=-2), output_shape=(attention_size,))(sent_representation) #Sum all attentions
-
-#Dense final layer for classification
-probabilities = Dense(num_classes, activation='softmax')(sent_representation)
-#Dense final layer for classification
-#probabilities = Dense(num_classes, activation='softmax')(merge)
-bins_K = variable(value=bins)
-
-#Multiply the probabilities with the bins --> gives larger freedom in assigning values
-def multiply(x):
-  return tf.matmul(x, bins_K,transpose_b=True)
-
-pred_vals = Lambda(multiply)(probabilities)
-
-
-#Custom loss
-def bin_loss(y_true, y_pred):
-  #Shold make this a log loss
-	g_loss = (y_true-y_pred)**2 #general, compare difference
-	kl_loss = keras.losses.kullback_leibler_divergence(y_true, y_pred) #better than comparing to gaussian?
-	sum_kl_loss = keras.backend.sum(kl_loss, axis =0)
-	sum_g_loss = keras.backend.sum(g_loss, axis =0)
-	sum_g_loss = sum_g_loss*10 #This is basically a loss penalty
-	loss = sum_g_loss+sum_kl_loss
-	return loss
-
-
-#Model: define inputs and outputs
-model = Model(inputs = [in_1, in_2], outputs = pred_vals) #probabilities)#
+#Model in and outputs
+model = Model(inputs = [input], outputs = decoded) #probabilities)#
 opt = optimizers.Adam(clipnorm=1., lr = lrate) #remove clipnorm and add loss penalty - clipnorm works better
-model.compile(loss=bin_loss, #'categorical_crossentropy',
+model.compile(loss=binary_crossentropy',
               optimizer=opt,
               metrics = ['accuracy'])
 
@@ -193,8 +156,7 @@ model.compile(loss=bin_loss, #'categorical_crossentropy',
 if find_lr == True:
   lr_finder = LRFinder(model)
 
-  X_train = [X1_train, X2_train]
-  lr_finder.find(X_train, y_train, start_lr=0.00000001, end_lr=1, batch_size=batch_size, epochs=1)
+  lr_finder.find(X, X, start_lr=0.00000001, end_lr=1, batch_size=batch_size, epochs=1)
   losses = lr_finder.losses
   lrs = lr_finder.lrs
   l_l = np.asarray([lrs, losses])
@@ -239,19 +201,16 @@ with open(out_dir+"model.json", "w") as json_file:
     json_file.write(model_json)
 
 #Fit model
-model.fit(x = [X1_train, X2_train],
-            y = y_train,
+model.fit(x = [X],
+            y = X,
             batch_size = batch_size,
             epochs=num_epochs,
-            validation_data = [[X1_test, X2_test], y_test],
             shuffle=True, #Dont feed continuously
             callbacks=callbacks)
 
 
 #Convert binned predictions to binary
-pred = model.predict([X1_test, X2_test])
-#pred = np.argmax(pred, axis = 1)
-#true = np.argmax(y_test, axis = 1)
-np.save(out_dir+'true.npy', y_test)
-np.save(out_dir+'pred.npy', pred[:,0])
+pred = model.predict([X])
+np.save(out_dir+'true.npy', X)
+np.save(out_dir+'pred.npy', pred)
 pdb.set_trace()

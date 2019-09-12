@@ -71,13 +71,13 @@ def read_net_params(params_file):
 
     return net_params
 
-def pad(ar, x):
-    '''Pads a 1D array to len x
+def pad(ar, x, y):
+    '''Pads a 2D array to len x
     '''
     shape = ar.shape
 
     if max(shape) < x:
-        empty = np.zeros((x))
+        empty = np.zeros((x,y))
         empty[0:len(ar)]=ar
         ar = empty
 
@@ -103,12 +103,16 @@ bins = np.array([-5.47712125, -4.77712125, -4.07712125, -3.37712125, -2.69897,
 y_binned = np.digitize(pic50,bins)
 y = pic50
 X1 =[]
+#onehot encode aa_enc
+for i in range(len(aa_enc)):
+    X1.append(np.eye(20)[aa_enc[i]])
 max_length = 25 #Goes from 15-25
-for enc in aa_enc:
-    X1.append(pad(enc, max_length))
-X1 = np.asarray(X1, dtype = int)
-#onehot encode X1
-X1 = np.eye(20)[X1]
+
+for i in range(len(X1)):
+    X1[i] = pad(X1[i], max_length, 20)
+
+X1 = np.array(X1)
+pdb.set_trace()
 X2 = np.asarray(df['allele_enc'])
 X2 = np.expand_dims(X2, axis=1)
 #different splits

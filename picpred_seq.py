@@ -265,7 +265,7 @@ def bin_loss(y_true, y_pred):
 	sum_kl_loss = keras.backend.sum(kl_loss, axis =0)
 	sum_g_loss = keras.backend.sum(g_loss, axis =0)
 	sum_g_loss = sum_g_loss*10 #This is basically a loss penalty
-	loss = sum_g_loss+sum_kl_loss
+	loss = sum_g_loss#+sum_kl_loss
 	return loss
 
 

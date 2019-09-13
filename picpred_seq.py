@@ -42,10 +42,8 @@ parser.add_argument('dataframe', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to df.')
 parser.add_argument('aa_encodings', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with amino acid encodings')
-parser.add_argument('allele_emb', nargs=1, type= str,
-                  default=sys.stdin, help = 'Path to file with allele embeddings')
-parser.add_argument('allele_order', nargs=1, type= str,
-                  default=sys.stdin, help = 'Path to file with allele embedding order')
+parser.add_argument('allele_enc_path', nargs=1, type= str,
+                  default=sys.stdin, help = 'Path to directory with allele encodings')
 #parser.add_argument('params_file', nargs=1, type= str,
 #                  default=sys.stdin, help = 'Path to file with net parameters')
 parser.add_argument('out_dir', nargs=1, type= str,
@@ -106,8 +104,7 @@ def encode_alleles(alleles, allele_embs):
 args = parser.parse_args()
 df_path = args.dataframe[0]
 aa_enc = np.load(args.aa_encodings[0], allow_pickle = True)
-allele_embs_path = args.allele_emb[0]
-allele_order_path = args.allele_order[0]
+allele_enc_path = args.allele_enc_path[0]
 #params_file = args.params_file[0]
 out_dir = args.out_dir[0]
 
@@ -116,9 +113,11 @@ out_dir = args.out_dir[0]
 df = pd.read_csv(df_path)
 #Get pic50 values
 pic50 = -np.log10(df['measurement_value'])
-bins = np.array([-5.47712125, -4.77712125, -4.07712125, -3.37712125, -2.69897,
-       -1.97712125, -1.27712125, -0.57712125,  0.12287875,  0.82287875])
-
+#bins = np.array([-5.47712125, -4.77712125, -4.07712125, -3.37712125, -2.69897,
+#       -1.97712125, -1.27712125, -0.57712125,  0.12287875,  0.82287875])
+bins = np.array([-5.48, -5.13, -4.78, -4.43, -4.08, -3.73, -3.38, -3.03, -2.68,
+       -2.33, -1.98, -1.63, -1.28, -0.93, -0.58, -0.23,  0.12,  0.47,
+        0.82])
 #Bin the pic50 values
 y_binned = np.digitize(pic50,bins)
 y = pic50
@@ -135,16 +134,16 @@ X1 = np.array(X1)
 
 #Get allele encodings
 allele_dict = {}
-allele_embs = np.load(allele_embs_path, allow_pickle = True)
-allele_order = [*pd.read_csv(allele_order_path, sep = '\n', header = None)[0]]
-for i in range(len(allele_order)):
-    allele_dict[allele_order[i]] = allele_embs[i]
+aa_enc_files = glob.glob(allele_enc_path+'*')
+for file in aa_enc_files:
+    name = file.split('/')[-1].split('.')[0]
+    enc = np.load(file, allow_pickle = True)
+    enc = np.eye(20)[enc]
+    enc = pad(enc, 300, 20)
+    allele_dict[name] = enc
 
-#Encode
+#Encode alleles
 allele_encodings = encode_alleles([*df['allele']], allele_dict)
-#X2 = np.asarray(df['allele_enc'])
-#X2 = np.expand_dims(X2, axis=1)
-#different splits
 X2 = np.asarray(allele_encodings)
 #y= y_binned
 sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=0)
@@ -154,13 +153,6 @@ for train_index, test_index in sss.split(X2, y_binned):
     y_train, y_test = y[train_index], y[test_index]
 bins = np.expand_dims(bins, axis=0)
 
-#onehot encode X2 train and test
-#X2_train = np.eye(42)[X2_train]
-#X2_test = np.eye(42)[X2_test]
-
-#onehot encode y train and test
-#y_train = np.eye(bins.size+1)[y_train]
-#y_test = np.eye(bins.size+1)[y_test]
 #Tensorboard for logging and visualization
 log_name = str(time.time())
 tensorboard = TensorBoard(log_dir=out_dir+log_name)
@@ -170,16 +162,16 @@ tensorboard = TensorBoard(log_dir=out_dir+log_name)
 #Parameters
 #net_params = read_net_params(params_file)
 input_dim1 = (25,20) #20 AA*25 residues
-input_dim2 = (6, 1) #Shape of allele encodings
-num_classes = max(bins.shape) #add +1 if categorical
+input_dim2 = (600, 20) #Shape of allele encodings
+num_classes = bins.size #add +1 if categorical
 kernel_size =  9 #The length of the conserved part that should bind to the binding grove
-
+dilation_rate = 2
 #Variable params
 filters =  10#int(net_params['filters']) # Dimension of the embedding vector.
 batch_size = 32 #int(net_params['batch_size'])
 
 #Attention size
-attention_size = filters*17+6
+attention_size = filters*17+int(filters/2)
 #lr opt
 find_lr = 0
 #loss
@@ -189,7 +181,7 @@ step_size = 5 #should increase alot - maybe 5?
 num_cycles = 3
 num_epochs = step_size*2*num_cycles
 num_steps = int(len(X1_train)/batch_size)
-max_lr = 0.01
+max_lr = 0.003
 min_lr = max_lr/10
 lr_change = (max_lr-min_lr)/step_size  #(step_size*num_steps) #How mauch to change each batch
 lrate = min_lr
@@ -197,15 +189,40 @@ lrate = min_lr
 in_1 = keras.Input(shape = input_dim1)
 in_2 = keras.Input(shape = input_dim2)
 
-#Convolution on aa encoding
-x = Conv1D(filters = filters, kernel_size = kernel_size, input_shape=input_dim1, padding ="valid")(in_1) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
+def resnet(x, num_res_blocks):
+	"""Builds a resnet with 1D convolutions of the defined depth.
+	"""
+
+
+    	# Instantiate the stack of residual units
+    	#Similar to ProtCNN, but they used batch_size = 64, 2000 filters and kernel size of 21
+	for res_block in range(num_res_blocks):
+		batch_out1 = BatchNormalization()(x) #Bacth normalize, focus on segment
+		activation1 = Activation('relu')(x)
+		conv_out1 = Conv1D(filters = filters, kernel_size = kernel_size, dilation_rate = dilation_rate, input_shape=input_dim2, padding ="same")(activation1)
+		batch_out2 = BatchNormalization()(conv_out1) #Bacth normalize, focus on segment
+		activation2 = Activation('relu')(conv_out1)
+        #Downsample - half filters
+		conv_out2 = Conv1D(filters = int(filters/2), kernel_size = kernel_size, dilation_rate = 1, input_shape=input_dim2, padding ="same")(activation2)
+		x = Conv1D(filters = int(filters/2), kernel_size = kernel_size, dilation_rate = 1, input_shape=input_dim2, padding ="same")(x)
+		x = add([x, conv_out2]) #Skip connection
+
+
+
+	return x
+
+#Convolution on peptide encoding
+x = Conv1D(filters = filters, kernel_size = kernel_size, padding ="valid")(in_1) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
 #take steps of 1 doing 9+20 convolutions using filters number of filters
 x = BatchNormalization()(x) #Bacth normalize, focus on segment
 x = Activation('relu')(x)
 
+#Convolution on allele encoding
+a = resnet(in_2, 1)
+a = MaxPooling1D(pool_size=600)(a)
 #Flatten for concatenation
 flat1 = Flatten()(x)  #Flatten
-flat2 = Flatten()(in_2)  #Flatten
+flat2 = Flatten()(a)  #Flatten
 
 x = concatenate([flat1, flat2])
 
@@ -252,9 +269,8 @@ def bin_loss(y_true, y_pred):
 #Model: define inputs and outputs
 model = Model(inputs = [in_1, in_2], outputs = out_vals) #probabilities)#
 opt = optimizers.Adam(clipnorm=1., lr = lrate) #remove clipnorm and add loss penalty - clipnorm works better
-model.compile(loss=bin_loss, #'categorical_crossentropy',
-              optimizer=opt,
-              metrics = ['accuracy'])
+model.compile(loss=bin_loss,
+              optimizer=opt)
 
 
 

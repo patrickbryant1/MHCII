@@ -134,12 +134,11 @@ X1 = np.array(X1)
 
 #Get allele encodings
 allele_dict = {}
-aa_enc_files = glob.glob(allele_enc_path+'*')
+aa_enc_files = glob.glob(allele_enc_path+'*_alpha.npy')
 for file in aa_enc_files:
-    name = file.split('/')[-1].split('.')[0]
+    name = file.split('/')[-1].split('_')[0]
     enc = np.load(file, allow_pickle = True)
-    enc = np.eye(20)[enc]
-    enc = pad(enc, 300, 20)
+    enc = np.eye(21)[enc]
     allele_dict[name] = enc
 
 #Encode alleles
@@ -162,7 +161,7 @@ tensorboard = TensorBoard(log_dir=out_dir+log_name)
 #Parameters
 #net_params = read_net_params(params_file)
 input_dim1 = (25,20) #20 AA*25 residues
-input_dim2 = (600, 20) #Shape of allele encodings
+input_dim2 = (86, 21) #Shape of allele encodings
 num_classes = bins.size #add +1 if categorical
 kernel_size =  9 #The length of the conserved part that should bind to the binding grove
 dilation_rate = 2
@@ -171,7 +170,7 @@ filters =  10#int(net_params['filters']) # Dimension of the embedding vector.
 batch_size = 32 #int(net_params['batch_size'])
 
 #Attention size
-attention_size = filters*17+int(filters/2)
+attention_size = filters*17+filters*(86-kernel_size+1)
 #lr opt
 find_lr = 0
 #loss
@@ -218,8 +217,12 @@ x = BatchNormalization()(x) #Bacth normalize, focus on segment
 x = Activation('relu')(x)
 
 #Convolution on allele encoding
-a = resnet(in_2, 1)
-a = MaxPooling1D(pool_size=600)(a)
+# a = resnet(in_2, 1)
+# a = MaxPooling1D(pool_size=86)(a)
+a = Conv1D(filters = filters, kernel_size = kernel_size, padding ="valid")(in_2) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
+#take steps of 1 doing 9+20 convolutions using filters number of filters
+a = BatchNormalization()(a) #Bacth normalize, focus on segment
+a = Activation('relu')(a)
 #Flatten for concatenation
 flat1 = Flatten()(x)  #Flatten
 flat2 = Flatten()(a)  #Flatten
@@ -239,7 +242,7 @@ sent_representation = multiply([x, attention]) #Multiply input to attention with
 sent_representation = Lambda(lambda xin: keras.backend.sum(xin, axis=-2), output_shape=(attention_size,))(sent_representation) #Sum all attentions
 
 #Dense final layer for classification
-probabilities = Dense(num_classes, activation='softmax')(sent_representation)
+probabilities = Dense(num_classes, activation='softmax')(x)
 #Dense final layer for classification
 #probabilities = Dense(num_classes, activation='softmax')(merge)
 if loss == 'bin_loss':

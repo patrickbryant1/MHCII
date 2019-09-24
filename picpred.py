@@ -38,14 +38,18 @@ import pdb
 #Arguments for argparse module:
 parser = argparse.ArgumentParser(description = '''A Neural Network for predicting binding of peptides to MHCII variants.''')
 
-parser.add_argument('dataframe', nargs=1, type= str,
+parser.add_argument('train_df', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to df.')
-parser.add_argument('aa_encodings', nargs=1, type= str,
+parser.add_argument('train_aa_enc', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with amino acid encodings')
-parser.add_argument('allele_emb', nargs=1, type= str,
-                  default=sys.stdin, help = 'Path to file with allele embeddings')
-parser.add_argument('allele_order', nargs=1, type= str,
-                  default=sys.stdin, help = 'Path to file with allele embedding order')
+parser.add_argument('train_df', nargs=1, type= str,
+                  default=sys.stdin, help = 'Path to df.')
+parser.add_argument('train_aa_enc', nargs=1, type= str,
+                  default=sys.stdin, help = 'Path to file with amino acid encodings')
+#parser.add_argument('allele_emb', nargs=1, type= str,
+#                  default=sys.stdin, help = 'Path to file with allele embeddings')
+#parser.add_argument('allele_order', nargs=1, type= str,
+#                  default=sys.stdin, help = 'Path to file with allele embedding order')
 #parser.add_argument('params_file', nargs=1, type= str,
 #                  default=sys.stdin, help = 'Path to file with net parameters')
 parser.add_argument('out_dir', nargs=1, type= str,
@@ -106,53 +110,44 @@ def encode_alleles(alleles, allele_embs):
 args = parser.parse_args()
 df_path = args.dataframe[0]
 aa_enc = np.load(args.aa_encodings[0], allow_pickle = True)
-allele_embs_path = args.allele_emb[0]
-allele_order_path = args.allele_order[0]
+#allele_embs_path = args.allele_emb[0]
+#allele_order_path = args.allele_order[0]
 #params_file = args.params_file[0]
 out_dir = args.out_dir[0]
 
 #Assign data and labels
 #Read df
 df = pd.read_csv(df_path)
-#Get pic50 values
-pic50 = -np.log10(df['measurement_value'])
-bins = np.array([-5.47712125, -4.77712125, -4.07712125, -3.37712125, -2.69897,
-       -1.97712125, -1.27712125, -0.57712125,  0.12287875,  0.82287875])
+#Get converted ic50 values
+bins = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
 
-#Bin the pic50 values
-y_binned = np.digitize(pic50,bins)
-y = pic50
+y = np.asarray(df['log50k'])
+#Bin the converted ic50 values
+#y_binned = np.digitize(y,bins)
+
 X1 =[]
 #onehot encode aa_enc
 for i in range(len(aa_enc)):
     X1.append(np.eye(20)[aa_enc[i]])
-max_length = 25 #Goes from 15-25
+max_length = 37 #Goes from 9-37
 
 for i in range(len(X1)):
     X1[i] = pad(X1[i], max_length, 20)
 
 X1 = np.array(X1)
 
-#Get allele encodings
-allele_dict = {}
-allele_embs = np.load(allele_embs_path, allow_pickle = True)
-allele_order = [*pd.read_csv(allele_order_path, sep = '\n', header = None)[0]]
-for i in range(len(allele_order)):
-    allele_dict[allele_order[i]] = allele_embs[i]
+# #Get allele encodings
+# allele_dict = {}
+# allele_embs = np.load(allele_embs_path, allow_pickle = True)
+# allele_order = [*pd.read_csv(allele_order_path, sep = '\n', header = None)[0]]
+# for i in range(len(allele_order)):
+#     allele_dict[allele_order[i]] = allele_embs[i]
 
 #Encode
-allele_encodings = encode_alleles([*df['allele']], allele_dict)
-#X2 = np.asarray(df['allele_enc'])
+#allele_encodings = encode_alleles([*df['allele']], allele_dict)
+X2 = np.asarray(df['allele_enc'])
 #X2 = np.expand_dims(X2, axis=1)
 #different splits
-X2 = np.asarray(allele_encodings)
-#y= y_binned
-sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=0)
-for train_index, test_index in sss.split(X2, y_binned):
-    X1_train, X1_test = X1[train_index], X1[test_index]
-    X2_train, X2_test = X2[train_index], X2[test_index]
-    y_train, y_test = y[train_index], y[test_index]
-bins = np.expand_dims(bins, axis=0)
 
 #onehot encode X2 train and test
 #X2_train = np.eye(42)[X2_train]

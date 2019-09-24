@@ -126,7 +126,7 @@ y_test = convert_to_pic50(y_test)
 
 true_binary = []
 for i in range(len(y_test)):
-    if y_test[i]>0.426:
+    if y_test[i]<=-np.log10(500):
         true_binary.append(1)
     else:
         true_binary.append(0)
@@ -227,7 +227,7 @@ pred_vals = Lambda(multiply)(probabilities)
 #Custom loss
 def bin_loss(y_true, y_pred):
   #Shold make this a log loss
-	g_loss = np.absolute(y_true-y_pred) #general, compare difference
+	g_loss = (y_true-y_pred)**2 #general, compare difference
 	kl_loss = keras.losses.kullback_leibler_divergence(y_true, y_pred) #better than comparing to gaussian?
 	sum_kl_loss = keras.backend.sum(kl_loss, axis =0)
 	sum_g_loss = keras.backend.sum(g_loss, axis =0)
@@ -279,7 +279,7 @@ class LRschedule(Callback):
     pred_binary = []
 
     for i in range(len(pred)):
-        if pred[i]>=0.426:
+        if pred[i]<=-np.log10(500):
             pred_binary.append(1)
         else:
             pred_binary.append(0)

@@ -46,6 +46,8 @@ parser.add_argument('test_df', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to df.')
 parser.add_argument('test_aa_enc', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with amino acid encodings')
+# parser.add_argument('params_file', nargs=1, type= str,
+#                   default=sys.stdin, help = 'Path to file with net parameters')
 parser.add_argument('out_dir', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to output directory. Include /in end')
 
@@ -106,15 +108,19 @@ train_df = pd.read_csv(args.train_df[0])
 train_aa_enc = np.load(args.train_aa_enc[0], allow_pickle = True)
 test_df = pd.read_csv(args.test_df[0])
 test_aa_enc = np.load(args.test_aa_enc[0], allow_pickle = True)
+#params_file = args.params_file[0]
 out_dir = args.out_dir[0]
 
 #Assign data and labels
 #Get converted ic50 values
-bins = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
+bins = np.array([0.1, 0.2, 0.3, 0.426, 0.5, 0.6, 0.7, 0.8, 0.9])
 bins = np.expand_dims(bins, axis=0) #required for later multiplication
+#bins = np.array([0.2, 0.4259, 0.6, 1.0])
 #Get values
 y_train = np.asarray(train_df['log50k'])
 y_test = np.asarray(test_df['log50k'])
+
+
 
 #Get y_test in binary
 #When classifying the peptides into binders and non-binders
@@ -128,6 +134,13 @@ for i in range(len(y_test)):
         true_binary.append(1)
     else:
         true_binary.append(0)
+
+#Bin data
+#y_train = np.digitize(y_train, bins)
+#y_test = np.digitize(y_test, bins)
+#Onehot encode
+#y_train = np.eye(bins.size+1)[y_train]
+#y_test = np.eye(bins.size+1)[y_test]
 
 #onehot encode aa_enc
 #train
@@ -176,7 +189,7 @@ batch_size = 32 #int(net_params['batch_size'])
 #lr opt
 find_lr = 0
 #loss
-loss = 'bin_loss'#'categorical_crossentropy'
+#loss = 'bin_loss'#'categorical_crossentropy'
 #LR schedule
 step_size = 5 #should increase alot - maybe 5?
 num_cycles = 3
@@ -206,18 +219,19 @@ x = concatenate([flat1, flat2])
 #Dense final layer for classification
 probabilities = Dense(num_classes, activation='softmax')(x)
 bins_K = variable(value=bins)
-
+#
 #Multiply the probabilities with the bins --> gives larger freedom in assigning values
+#I also think it is better to predict a true value to see the correlation
 def multiply(x):
     return tf.matmul(x, bins_K,transpose_b=True)
 pred_vals = Lambda(multiply)(probabilities)
-out_vals = pred_vals
+
 
 
 #Custom loss
 def bin_loss(y_true, y_pred):
   #Shold make this a log loss
-	g_loss = (y_true-y_pred)**2 #general, compare difference
+	g_loss = np.absolute(y_true-y_pred) #general, compare difference
 	kl_loss = keras.losses.kullback_leibler_divergence(y_true, y_pred) #better than comparing to gaussian?
 	sum_kl_loss = keras.backend.sum(kl_loss, axis =0)
 	sum_g_loss = keras.backend.sum(g_loss, axis =0)
@@ -227,10 +241,11 @@ def bin_loss(y_true, y_pred):
 
 
 #Model: define inputs and outputs
-model = Model(inputs = [in_1, in_2], outputs = out_vals) #probabilities)#
+model = Model(inputs = [in_1, in_2], outputs = pred_vals) # probabilities)#
 opt = optimizers.Adam(clipnorm=1., lr = lrate) #remove clipnorm and add loss penalty - clipnorm works better
-model.compile(loss=bin_loss, #'categorical_crossentropy',
+model.compile(loss=bin_loss, #categorical_crossentropy,
               optimizer=opt)
+              #metrics = ['accuracy'])
 
 
 
@@ -264,9 +279,11 @@ class LRschedule(Callback):
 
     #Evaluate AUC
     pred = model.predict([X1_test, X2_test])
+    #pred = np.argmax(pred, axis = 1)
     pred_binary = []
+
     for i in range(len(pred)):
-        if pred[i]>0.426:
+        if pred[i]>=0.426:
             pred_binary.append(1)
         else:
             pred_binary.append(0)

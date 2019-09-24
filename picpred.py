@@ -14,7 +14,7 @@ import math
 import time
 from ast import literal_eval
 from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
-
+from sklearn.metrics import roc_auc_score
 #Keras
 import tensorflow as tf
 from tensorflow.keras import regularizers,optimizers
@@ -124,7 +124,7 @@ y_test = np.asarray(test_df['log50k'])
 
 true_binary = []
 for i in range(len(y_test)):
-    if true[i]>0.426:
+    if y_test[i]>0.426:
         true_binary.append(1)
     else:
         true_binary.append(0)
@@ -262,8 +262,8 @@ class LRschedule(Callback):
     self.lr = self.lr + self.lr_change
     keras.backend.set_value(self.model.optimizer.lr, self.lr)
 
+    #Evaluate AUC
     pred = model.predict([X1_test, X2_test])
-
     pred_binary = []
     for i in range(len(pred)):
         if pred[i]>0.426:
@@ -271,7 +271,9 @@ class LRschedule(Callback):
         else:
             pred_binary.append(0)
 
-    
+    print('\tAUC',roc_auc_score(true_binary, pred_binary))
+
+
 #Lrate
 lrate = LRschedule()
 

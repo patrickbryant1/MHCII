@@ -87,20 +87,13 @@ def pad(ar, x, y):
 
     return ar
 
-def encode_alleles(alleles, allele_embs):
-    '''Encodes all alleles in accordance to the autoencodings in allele_embs
-    '''
 
-    allele_encodings = [] #Save allele encodings
-    for al in alleles:
-        al = al.split('/')
-        if len(al) > 1:
-            enc = np.concatenate((allele_embs[al[0]],allele_embs[al[1]]))
-        else:
-            enc = np.concatenate((allele_embs[al[0]],allele_embs[al[0]]))
-        allele_encodings.append(enc)
-
-    return allele_encodings
+def convert_to_pic50(y):
+    '''Convert log50k vals to pic50'''
+    y = np.power(50000, (1-y))
+    #Convert to pic50 = -log10(ic50)
+    y = -np.log10(y)
+    return y
 
 #MAIN
 args = parser.parse_args()
@@ -113,14 +106,17 @@ out_dir = args.out_dir[0]
 
 #Assign data and labels
 #Get converted ic50 values
-bins = np.array([0.1, 0.2, 0.3, 0.426, 0.5, 0.6, 0.7, 0.8, 0.9])
+#bins = np.array([0.1, 0.2, 0.3, 0.426, 0.5, 0.6, 0.7, 0.8, 0.9])
+bins = np.array([-5.47712125, -4.77712125, -4.07712125, -3.37712125, -2.69897,
+       -1.97712125, -1.27712125, -0.57712125,  0.12287875,  0.82287875])
 bins = np.expand_dims(bins, axis=0) #required for later multiplication
-#bins = np.array([0.2, 0.4259, 0.6, 1.0])
+
 #Get values
 y_train = np.asarray(train_df['log50k'])
+y_train = convert_to_pic50(y_train)
 y_test = np.asarray(test_df['log50k'])
-
-
+y_test = convert_to_pic50(y_test)
+#It is probably easier to convert to pic50 - bigger differences btw binding/non
 
 #Get y_test in binary
 #When classifying the peptides into binders and non-binders

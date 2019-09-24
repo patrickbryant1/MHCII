@@ -116,6 +116,18 @@ bins = np.expand_dims(bins, axis=0) #required for later multiplication
 y_train = np.asarray(train_df['log50k'])
 y_test = np.asarray(test_df['log50k'])
 
+#Get y_test in binary
+#When classifying the peptides into binders and non-binders
+#for calculation of the AUC values for instance, a threshold of 500 nM is used.
+#This means that peptides with log50k transformed binding
+#affinity values greater than 0.426 are classified as binders.
+
+true_binary = []
+for i in range(len(y_test)):
+    if true[i]>0.426:
+        true_binary.append(1)
+    else:
+        true_binary.append(0)
 
 #onehot encode aa_enc
 #train
@@ -252,7 +264,14 @@ class LRschedule(Callback):
 
     pred = model.predict([X1_test, X2_test])
 
+    pred_binary = []
+    for i in range(len(pred)):
+        if pred[i]>0.426:
+            pred_binary.append(1)
+        else:
+            pred_binary.append(0)
 
+    
 #Lrate
 lrate = LRschedule()
 

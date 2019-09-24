@@ -42,16 +42,10 @@ parser.add_argument('train_df', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to df.')
 parser.add_argument('train_aa_enc', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with amino acid encodings')
-parser.add_argument('train_df', nargs=1, type= str,
+parser.add_argument('test_df', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to df.')
-parser.add_argument('train_aa_enc', nargs=1, type= str,
+parser.add_argument('test_aa_enc', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with amino acid encodings')
-#parser.add_argument('allele_emb', nargs=1, type= str,
-#                  default=sys.stdin, help = 'Path to file with allele embeddings')
-#parser.add_argument('allele_order', nargs=1, type= str,
-#                  default=sys.stdin, help = 'Path to file with allele embedding order')
-#parser.add_argument('params_file', nargs=1, type= str,
-#                  default=sys.stdin, help = 'Path to file with net parameters')
 parser.add_argument('out_dir', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to output directory. Include /in end')
 
@@ -108,64 +102,58 @@ def encode_alleles(alleles, allele_embs):
 
 #MAIN
 args = parser.parse_args()
-df_path = args.dataframe[0]
-aa_enc = np.load(args.aa_encodings[0], allow_pickle = True)
-#allele_embs_path = args.allele_emb[0]
-#allele_order_path = args.allele_order[0]
-#params_file = args.params_file[0]
+train_df = pd.read_csv(args.train_df[0])
+train_aa_enc = np.load(args.train_aa_enc[0], allow_pickle = True)
+test_df = pd.read_csv(args.test_df[0])
+test_aa_enc = np.load(args.test_aa_enc[0], allow_pickle = True)
 out_dir = args.out_dir[0]
 
 #Assign data and labels
-#Read df
-df = pd.read_csv(df_path)
 #Get converted ic50 values
 bins = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
+bins = np.expand_dims(bins, axis=0) #required for later multiplication
+#Get values
+y_train = np.asarray(train_df['log50k'])
+y_test = np.asarray(test_df['log50k'])
 
-y = np.asarray(df['log50k'])
-#Bin the converted ic50 values
-#y_binned = np.digitize(y,bins)
 
-X1 =[]
 #onehot encode aa_enc
-for i in range(len(aa_enc)):
-    X1.append(np.eye(20)[aa_enc[i]])
+#train
+X1_train =[]
+for i in range(len(train_aa_enc)):
+    X1_train.append(np.eye(20)[train_aa_enc[i]])
 max_length = 37 #Goes from 9-37
+for i in range(len(X1_train)):
+    X1_train[i] = pad(X1_train[i], max_length, 20)
+X1_train = np.array(X1_train)
+#test
+X1_test =[]
+for i in range(len(test_aa_enc)):
+    X1_test.append(np.eye(20)[test_aa_enc[i]])
+max_length = 37 #Goes from 9-37
+for i in range(len(X1_test)):
+    X1_test[i] = pad(X1_test[i], max_length, 20)
+X1_test = np.array(X1_test)
 
-for i in range(len(X1)):
-    X1[i] = pad(X1[i], max_length, 20)
-
-X1 = np.array(X1)
 
 # #Get allele encodings
-# allele_dict = {}
-# allele_embs = np.load(allele_embs_path, allow_pickle = True)
-# allele_order = [*pd.read_csv(allele_order_path, sep = '\n', header = None)[0]]
-# for i in range(len(allele_order)):
-#     allele_dict[allele_order[i]] = allele_embs[i]
-
-#Encode
-#allele_encodings = encode_alleles([*df['allele']], allele_dict)
-X2 = np.asarray(df['allele_enc'])
-#X2 = np.expand_dims(X2, axis=1)
-#different splits
+X2_train = np.asarray(train_df['allele_enc'])
+X2_test = np.asarray(test_df['allele_enc'])
 
 #onehot encode X2 train and test
-#X2_train = np.eye(42)[X2_train]
-#X2_test = np.eye(42)[X2_test]
-
-#onehot encode y train and test
-#y_train = np.eye(bins.size+1)[y_train]
-#y_test = np.eye(bins.size+1)[y_test]
+X2_train = np.eye(80)[X2_train]
+X2_train = np.expand_dims(X2_train, axis=2)
+X2_test = np.eye(80)[X2_test]
+X2_test = np.expand_dims(X2_test, axis=2)
 #Tensorboard for logging and visualization
 log_name = str(time.time())
 tensorboard = TensorBoard(log_dir=out_dir+log_name)
 
-
 ######MODEL######
 #Parameters
 #net_params = read_net_params(params_file)
-input_dim1 = (25,20) #20 AA*25 residues
-input_dim2 = (6, 1) #Shape of allele encodings
+input_dim1 = (37, 20) #20 AA*35 residues
+input_dim2 = (80, 1) #Shape of allele encodings
 num_classes = max(bins.shape) #add +1 if categorical
 kernel_size =  9 #The length of the conserved part that should bind to the binding grove
 
@@ -173,8 +161,6 @@ kernel_size =  9 #The length of the conserved part that should bind to the bindi
 filters =  10#int(net_params['filters']) # Dimension of the embedding vector.
 batch_size = 32 #int(net_params['batch_size'])
 
-#Attention size
-attention_size = filters*17+6
 #lr opt
 find_lr = 0
 #loss
@@ -205,32 +191,16 @@ flat2 = Flatten()(in_2)  #Flatten
 x = concatenate([flat1, flat2])
 
 
-#Attention layer
-#Attention layer - information will be redistributed in the backwards pass
-attention = Dense(1, activation='tanh')(x) #Normalize and extract info with tanh activated weight matrix (hidden attention weights)
-attention = Flatten()(attention) #Make 1D
-attention = Activation('tanh')(attention) #Softmax on all activations (normalize activations)
-attention = RepeatVector(attention_size)(attention) #Repeats the input "num_nodes" times.
-attention = Permute([2, 1])(attention) #Permutes the dimensions of the input according to a given pattern. (permutes pos 2 and 1 of attention)
-
-sent_representation = multiply([x, attention]) #Multiply input to attention with normalized activations
-sent_representation = Lambda(lambda xin: keras.backend.sum(xin, axis=-2), output_shape=(attention_size,))(sent_representation) #Sum all attentions
-
 #Dense final layer for classification
-probabilities = Dense(num_classes, activation='softmax')(sent_representation)
-#Dense final layer for classification
-#probabilities = Dense(num_classes, activation='softmax')(merge)
-if loss == 'bin_loss':
-    bins_K = variable(value=bins)
+probabilities = Dense(num_classes, activation='softmax')(x)
+bins_K = variable(value=bins)
 
-    #Multiply the probabilities with the bins --> gives larger freedom in assigning values
-    def multiply(x):
-        return tf.matmul(x, bins_K,transpose_b=True)
+#Multiply the probabilities with the bins --> gives larger freedom in assigning values
+def multiply(x):
+    return tf.matmul(x, bins_K,transpose_b=True)
+pred_vals = Lambda(multiply)(probabilities)
+out_vals = pred_vals
 
-    pred_vals = Lambda(multiply)(probabilities)
-    out_vals = pred_vals
-else:
-    out_vals = probabilities
 
 #Custom loss
 def bin_loss(y_true, y_pred):
@@ -248,8 +218,7 @@ def bin_loss(y_true, y_pred):
 model = Model(inputs = [in_1, in_2], outputs = out_vals) #probabilities)#
 opt = optimizers.Adam(clipnorm=1., lr = lrate) #remove clipnorm and add loss penalty - clipnorm works better
 model.compile(loss=bin_loss, #'categorical_crossentropy',
-              optimizer=opt,
-              metrics = ['accuracy'])
+              optimizer=opt)
 
 
 
@@ -257,7 +226,7 @@ if find_lr == True:
   lr_finder = LRFinder(model)
 
   X_train = [X1_train, X2_train]
-  lr_finder.find(X_train, y_train, start_lr=0.00000001, end_lr=1, batch_size=batch_size, epochs=2)
+  lr_finder.find(X_train, y_train, start_lr=0.00000001, end_lr=1, batch_size=batch_size, epochs=1)
   losses = lr_finder.losses
   lrs = lr_finder.lrs
   l_l = np.asarray([lrs, losses])
@@ -280,6 +249,8 @@ class LRschedule(Callback):
 
     self.lr = self.lr + self.lr_change
     keras.backend.set_value(self.model.optimizer.lr, self.lr)
+
+    pred = model.predict([X1_test, X2_test])
 
 
 #Lrate
@@ -311,9 +282,10 @@ model.fit(x = [X1_train, X2_train],
             callbacks=callbacks)
 
 
-#Convert binned predictions to binary
-pred = model.predict([X1_test, X2_test])
-true = y_test
-np.save(out_dir+'true.npy', true)
-np.save(out_dir+'pred.npy', pred)
-pdb.set_trace()
+#For converting binned predictions to binary
+if find_lr == False:
+    pred = model.predict([X1_test, X2_test])
+    true = y_test
+    np.save(out_dir+'true.npy', true)
+    np.save(out_dir+'pred.npy', pred)
+    pdb.set_trace()

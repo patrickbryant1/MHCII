@@ -38,9 +38,13 @@ import pdb
 #Arguments for argparse module:
 parser = argparse.ArgumentParser(description = '''A Neural Network for predicting binding of peptides to MHCII variants.''')
 
-parser.add_argument('dataframe', nargs=1, type= str,
+parser.add_argument('train_df', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to df.')
-parser.add_argument('aa_encodings', nargs=1, type= str,
+parser.add_argument('train_aa_enc', nargs=1, type= str,
+                  default=sys.stdin, help = 'Path to file with amino acid encodings')
+parser.add_argument('test_df', nargs=1, type= str,
+                  default=sys.stdin, help = 'Path to df.')
+parser.add_argument('test_aa_enc', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with amino acid encodings')
 parser.add_argument('allele_enc_path', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to directory with allele encodings')

@@ -13,8 +13,7 @@ import glob
 import math
 import time
 from ast import literal_eval
-from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
-from sklearn.metrics import roc_auc_score
+#from sklearn.metrics import roc_auc_score
 #Keras
 import tensorflow as tf
 from tensorflow.keras import regularizers,optimizers
@@ -129,6 +128,8 @@ for i in range(len(y_test)):
         true_binary.append(1)
     else:
         true_binary.append(0)
+#Save true_binary
+np.save(out_dir+'true.npy', np.array(true_binary))
 
 #onehot encode aa_enc
 #train
@@ -173,29 +174,30 @@ tensorboard = TensorBoard(log_dir=out_dir+log_name)
 
 ######MODEL######
 #Parameters
-#net_params = read_net_params(params_file)
+net_params = read_net_params(params_file)
 input_dim1 = (37,20) #20 AA*25 residues
 input_dim2 = (94, 20) #Shape of allele encodings
 input_dim3 = (94, 20) #Shape of allele encodings
 num_classes = bins.size #add +1 if categorical
-kernel_size =  3 #Should probably vary this also #The length of the conserved part that should bind to the binding grove
-dilation_rate = 2
 #Variable params
-filters =  50#int(net_params['filters']) # Dimension of the embedding vector.
-batch_size = 32 #int(net_params['batch_size'])
+step_size = int(net_params['step_size'])
+num_cycles = int(net_params['num_cycles'])
+filters = int(net_params['filters']) # Dimension of the embedding vector.
+dilation_rate = int(net_params['dilation_rate'])  #dilation rate for convolutions
+alpha = int(net_params['alpha'])
+batch_size = int(net_params['batch_size'])
+kernel_size =  int(net_params['kernel_size']) #Should probably vary this also #The length of the conserved part that should bind to the binding grove
+find_lr = int(net_params['find_lr']) #lr opt
+max_lr = int(net_params['max_lr']) #lr opt
 
 #Attention size
 attention_size = filters*(37-kernel_size+1)+filters*(94-kernel_size+1)
-#lr opt
-find_lr = 0
+
 #loss
 loss = 'bin_loss'#'categorical_crossentropy'
 #LR schedule
-step_size = 5 #should increase alot - maybe 5?
-num_cycles = 3
 num_epochs = step_size*2*num_cycles
 num_steps = int(len(X1_train)/batch_size)
-max_lr = 0.003
 min_lr = max_lr/10
 lr_change = (max_lr-min_lr)/step_size  #(step_size*num_steps) #How mauch to change each batch
 lrate = min_lr
@@ -236,13 +238,13 @@ p = Activation('relu')(p) #try elu activation also?
 
 
 #Convolution on allele encoding C1
-c1 = Conv1D(filters = filters, kernel_size = kernel_size, padding ="valid")(in_2) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
+c1 = Conv1D(filters = filters, kernel_size = kernel_size, dilation_rate = dilation_rate, padding ="valid")(in_2) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
 #take steps of 1 doing kernel_size convolutions using filters number of filters
 c1 = BatchNormalization()(c1) #Bacth normalize, focus on segment
 c1 = Activation('relu')(c1) #try elu activation also?
 c1 = MaxPooling1D(pool_size=2)(c1)
 #Convolution on allele encoding C2
-c2 = Conv1D(filters = filters, kernel_size = kernel_size, padding ="valid")(in_3) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
+c2 = Conv1D(filters = filters, kernel_size = kernel_size, dilation_rate = dilation_rate, padding ="valid")(in_3) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
 #take steps of 1 doing kernel_size convolutions using filters number of filters
 c2 = BatchNormalization()(c2) #Bacth normalize, focus on segment
 c2 = Activation('relu')(c2)
@@ -289,7 +291,7 @@ def bin_loss(y_true, y_pred):
 	kl_loss = keras.losses.kullback_leibler_divergence(y_true, y_pred) #better than comparing to gaussian?
 	sum_kl_loss = keras.backend.sum(kl_loss, axis =0)
 	sum_g_loss = keras.backend.sum(g_loss, axis =0)
-	sum_g_loss = sum_g_loss*10 #This is basically a loss penalty
+	sum_g_loss = sum_g_loss*alpha #This is basically a loss penalty
 	loss = sum_g_loss+sum_kl_loss
 	return loss
 
@@ -340,8 +342,9 @@ class LRschedule(Callback):
             pred_binary.append(1)
         else:
             pred_binary.append(0)
-
-    print('\tAUC',roc_auc_score(true_binary, pred_binary))
+    #Save predictions
+    np.save(out_dir+'pred'+str(epoch)+'.npy', np.array(pred_binary))
+    #print('\tAUC',roc_auc_score(true_binary, pred_binary))
 
 #Lrate
 lrate = LRschedule()

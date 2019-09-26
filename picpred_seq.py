@@ -178,7 +178,7 @@ input_dim1 = (37,20) #20 AA*25 residues
 input_dim2 = (94, 20) #Shape of allele encodings
 input_dim3 = (94, 20) #Shape of allele encodings
 num_classes = bins.size #add +1 if categorical
-kernel_size =  9 #Should probably vary this also #The length of the conserved part that should bind to the binding grove
+kernel_size =  3 #Should probably vary this also #The length of the conserved part that should bind to the binding grove
 dilation_rate = 2
 #Variable params
 filters =  10#int(net_params['filters']) # Dimension of the embedding vector.
@@ -285,12 +285,12 @@ else:
 #Custom loss
 def bin_loss(y_true, y_pred):
   #Shold make this a log loss
-	g_loss = (y_true-y_pred)**2 #general, compare difference
+	g_loss = np.absolute(y_true-y_pred) #general, compare difference
 	kl_loss = keras.losses.kullback_leibler_divergence(y_true, y_pred) #better than comparing to gaussian?
 	sum_kl_loss = keras.backend.sum(kl_loss, axis =0)
 	sum_g_loss = keras.backend.sum(g_loss, axis =0)
 	sum_g_loss = sum_g_loss*10 #This is basically a loss penalty
-	loss = sum_g_loss#+sum_kl_loss
+	loss = sum_g_loss+sum_kl_loss
 	return loss
 
 
@@ -306,7 +306,7 @@ if find_lr == True:
   lr_finder = LRFinder(model)
 
   X_train = [X1_train, X2_train, X3_train]
-  lr_finder.find(X_train, y_train, start_lr=0.00000001, end_lr=1, batch_size=batch_size, epochs=2)
+  lr_finder.find(X_train, y_train, start_lr=0.00000001, end_lr=1, batch_size=batch_size, epochs=1)
   losses = lr_finder.losses
   lrs = lr_finder.lrs
   l_l = np.asarray([lrs, losses])

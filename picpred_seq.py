@@ -14,7 +14,7 @@ import math
 import time
 from ast import literal_eval
 from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
-
+from sklearn.metrics import roc_auc_score
 #Keras
 import tensorflow as tf
 from tensorflow.keras import regularizers,optimizers
@@ -54,8 +54,6 @@ parser.add_argument('test_C1', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with allele encodings for chain 1.')
 parser.add_argument('test_C2', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with allele encodings for chain 2.')
-parser.add_argument('allele_enc_path', nargs=1, type= str,
-                  default=sys.stdin, help = 'Path to directory with allele encodings')
 #parser.add_argument('params_file', nargs=1, type= str,
 #                  default=sys.stdin, help = 'Path to file with net parameters')
 parser.add_argument('out_dir', nargs=1, type= str,
@@ -113,6 +111,7 @@ out_dir = args.out_dir[0]
 
 #bins
 bins = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9])
+bins = np.expand_dims(bins, axis=0) #required for later multiplication
 
 #Get labels
 y_train = np.asarray(train_df['log50k'])
@@ -151,19 +150,22 @@ X1_test = np.array(X1_test)
 
 
 #Encode alleles
-#Each chain of the alleles is represented by 94 aa
+#Each chain of the alleles is represented by 97 aa
 X2_train = []
 X3_train = []
 for i in range(len(train_c1)):
     X2_train.append(np.eye(20)[train_c1[i]])
     X3_train.append(np.eye(20)[train_c2[i]])
+X2_train = np.array(X2_train) #convert to arrays
+X3_train = np.array(X3_train)
 
 X2_test = []
 X3_test = []
 for i in range(len(test_c1)):
     X2_test.append(np.eye(20)[test_c1[i]])
     X3_test.append(np.eye(20)[test_c2[i]])
-
+X2_test = np.array(X2_test) #convert to arrays
+X3_test= np.array(X3_test)
 #Tensorboard for logging and visualization
 log_name = str(time.time())
 tensorboard = TensorBoard(log_dir=out_dir+log_name)
@@ -183,7 +185,7 @@ filters =  10#int(net_params['filters']) # Dimension of the embedding vector.
 batch_size = 32 #int(net_params['batch_size'])
 
 #Attention size
-attention_size = filters*17+filters*(86-kernel_size+1)
+attention_size = filters*(37-kernel_size+1)+filters*(94-kernel_size+1)
 #lr opt
 find_lr = 0
 #loss
@@ -230,7 +232,7 @@ def resnet(x, num_res_blocks):
 p = Conv1D(filters = filters, kernel_size = kernel_size, padding ="valid")(in_1) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
 #take steps of 1 doing kernel_size convolutions using filters number of filters
 p = BatchNormalization()(p) #Bacth normalize, focus on segment
-p = Activation('relu')(cp) #try elu activation also?
+p = Activation('relu')(p) #try elu activation also?
 
 
 #Convolution on allele encoding C1
@@ -293,9 +295,9 @@ def bin_loss(y_true, y_pred):
 
 
 #Model: define inputs and outputs
-model = Model(inputs = [in_1, in_2], outputs = out_vals) #probabilities)#
+model = Model(inputs = [in_1, in_2, in_3], outputs = out_vals) #probabilities)#
 opt = optimizers.Adam(clipnorm=1., lr = lrate) #remove clipnorm and add loss penalty - clipnorm works better
-model.compile(loss=loss,
+model.compile(loss=bin_loss,
               optimizer=opt)
 
 
@@ -328,6 +330,18 @@ class LRschedule(Callback):
     self.lr = self.lr + self.lr_change
     keras.backend.set_value(self.model.optimizer.lr, self.lr)
 
+    #Evaluate AUC
+    pred = model.predict([X1_test, X2_test, X3_test])
+    #pred = np.argmax(pred, axis = 1)
+    pred_binary = []
+
+    for i in range(len(pred)):
+        if pred[i]>=t:
+            pred_binary.append(1)
+        else:
+            pred_binary.append(0)
+
+    print('\tAUC',roc_auc_score(true_binary, pred_binary))
 
 #Lrate
 lrate = LRschedule()

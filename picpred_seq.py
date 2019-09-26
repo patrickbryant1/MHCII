@@ -191,7 +191,7 @@ find_lr = int(net_params['find_lr']) #lr opt
 max_lr = float(net_params['max_lr']) #lr opt
 
 #Attention size
-attention_size = filters*(37-kernel_size+1)+filters*(94-kernel_size-dilation_rate)
+#attention_size = filters*(37-kernel_size+1)+filters*(94-kernel_size-dilation_rate)
 #loss
 loss = 'bin_loss'#'categorical_crossentropy'
 #LR schedule
@@ -259,14 +259,14 @@ x = concatenate([flat1, flat2, flat3])
 
 #Attention layer
 #Attention layer - information will be redistributed in the backwards pass
-attention = Dense(1, activation='tanh')(x) #Normalize and extract info with tanh activated weight matrix (hidden attention weights)
-attention = Flatten()(attention) #Make 1D
-attention = Activation('tanh')(attention) #Softmax on all activations (normalize activations)
-attention = RepeatVector(attention_size)(attention) #Repeats the input "num_nodes" times.
-attention = Permute([2, 1])(attention) #Permutes the dimensions of the input according to a given pattern. (permutes pos 2 and 1 of attention)
+#attention = Dense(1, activation='tanh')(x) #Normalize and extract info with tanh activated weight matrix (hidden attention weights)
+#attention = Flatten()(attention) #Make 1D
+#attention = Activation('tanh')(attention) #Softmax on all activations (normalize activations)
+#attention = RepeatVector(attention_size)(attention) #Repeats the input "num_nodes" times.
+#attention = Permute([2, 1])(attention) #Permutes the dimensions of the input according to a given pattern. (permutes pos 2 and 1 of attention)
 
-sent_representation = multiply([x, attention]) #Multiply input to attention with normalized activations
-sent_representation = Lambda(lambda xin: keras.backend.sum(xin, axis=-2), output_shape=(attention_size,))(sent_representation) #Sum all attentions
+#sent_representation = multiply([x, attention]) #Multiply input to attention with normalized activations
+#sent_representation = Lambda(lambda xin: keras.backend.sum(xin, axis=-2), output_shape=(attention_size,))(sent_representation) #Sum all attentions
 
 #Dense final layer for classification
 probabilities = Dense(num_classes, activation='softmax')(x)

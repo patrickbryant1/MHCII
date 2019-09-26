@@ -53,8 +53,8 @@ parser.add_argument('test_C1', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with allele encodings for chain 1.')
 parser.add_argument('test_C2', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to file with allele encodings for chain 2.')
-#parser.add_argument('params_file', nargs=1, type= str,
-#                  default=sys.stdin, help = 'Path to file with net parameters')
+parser.add_argument('params_file', nargs=1, type= str,
+                  default=sys.stdin, help = 'Path to file with net parameters')
 parser.add_argument('out_dir', nargs=1, type= str,
                   default=sys.stdin, help = 'Path to output directory. Include /in end')
 
@@ -105,7 +105,7 @@ test_df = pd.read_csv(args.test_df[0])
 test_aa_enc = np.load(args.test_aa_enc[0], allow_pickle = True)
 test_c1 = np.load(args.test_C1[0], allow_pickle = True)
 test_c2 = np.load(args.test_C2[0], allow_pickle = True)
-#params_file = args.params_file[0]
+params_file = args.params_file[0]
 out_dir = args.out_dir[0]
 
 #bins

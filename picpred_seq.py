@@ -152,8 +152,17 @@ X1_test = np.array(X1_test)
 
 #Encode alleles
 #Each chain of the alleles is represented by 94 aa
-for i in range(len(test_aa_enc)):
-    X1_test.append(np.eye(20)[test_aa_enc[i]])
+X2_train = []
+X3_train = []
+for i in range(len(train_c1)):
+    X2_train.append(np.eye(20)[train_c1[i]])
+    X3_train.append(np.eye(20)[train_c2[i]])
+
+X2_test = []
+X3_test = []
+for i in range(len(test_c1)):
+    X2_test.append(np.eye(20)[test_c1[i]])
+    X3_test.append(np.eye(20)[test_c2[i]])
 
 #Tensorboard for logging and visualization
 log_name = str(time.time())
@@ -163,10 +172,11 @@ tensorboard = TensorBoard(log_dir=out_dir+log_name)
 ######MODEL######
 #Parameters
 #net_params = read_net_params(params_file)
-input_dim1 = (25,20) #20 AA*25 residues
-input_dim2 = (86, 21) #Shape of allele encodings
+input_dim1 = (37,20) #20 AA*25 residues
+input_dim2 = (94, 20) #Shape of allele encodings
+input_dim3 = (94, 20) #Shape of allele encodings
 num_classes = bins.size #add +1 if categorical
-kernel_size =  9 #The length of the conserved part that should bind to the binding grove
+kernel_size =  9 #Should probably vary this also #The length of the conserved part that should bind to the binding grove
 dilation_rate = 2
 #Variable params
 filters =  10#int(net_params['filters']) # Dimension of the embedding vector.
@@ -190,6 +200,7 @@ lrate = min_lr
 #MODEL
 in_1 = keras.Input(shape = input_dim1)
 in_2 = keras.Input(shape = input_dim2)
+in_3 = keras.Input(shape = input_dim3)
 
 def resnet(x, num_res_blocks):
 	"""Builds a resnet with 1D convolutions of the defined depth.
@@ -213,24 +224,34 @@ def resnet(x, num_res_blocks):
 
 	return x
 
+
+
 #Convolution on peptide encoding
-x = Conv1D(filters = filters, kernel_size = kernel_size, padding ="valid")(in_1) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
-#take steps of 1 doing 9+20 convolutions using filters number of filters
-x = BatchNormalization()(x) #Bacth normalize, focus on segment
-x = Activation('relu')(x)
+p = Conv1D(filters = filters, kernel_size = kernel_size, padding ="valid")(in_1) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
+#take steps of 1 doing kernel_size convolutions using filters number of filters
+p = BatchNormalization()(p) #Bacth normalize, focus on segment
+p = Activation('relu')(cp) #try elu activation also?
 
-#Convolution on allele encoding
-# a = resnet(in_2, 1)
-# a = MaxPooling1D(pool_size=86)(a)
-a = Conv1D(filters = filters, kernel_size = kernel_size, padding ="valid")(in_2) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
-#take steps of 1 doing 9+20 convolutions using filters number of filters
-a = BatchNormalization()(a) #Bacth normalize, focus on segment
-a = Activation('relu')(a)
+
+#Convolution on allele encoding C1
+c1 = Conv1D(filters = filters, kernel_size = kernel_size, padding ="valid")(in_2) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
+#take steps of 1 doing kernel_size convolutions using filters number of filters
+c1 = BatchNormalization()(c1) #Bacth normalize, focus on segment
+c1 = Activation('relu')(c1) #try elu activation also?
+c1 = MaxPooling1D(pool_size=2)(c1)
+#Convolution on allele encoding C2
+c2 = Conv1D(filters = filters, kernel_size = kernel_size, padding ="valid")(in_3) #Same means the input will be zero padded, so the convolution output can be the same size as the input.
+#take steps of 1 doing kernel_size convolutions using filters number of filters
+c2 = BatchNormalization()(c2) #Bacth normalize, focus on segment
+c2 = Activation('relu')(c2)
+c2 = MaxPooling1D(pool_size=2)(c2)
+
 #Flatten for concatenation
-flat1 = Flatten()(x)  #Flatten
-flat2 = Flatten()(a)  #Flatten
+flat1 = Flatten()(p)  #Flatten
+flat2 = Flatten()(c1)  #Flatten
+flat3 = Flatten()(c2)  #Flatten
 
-x = concatenate([flat1, flat2])
+x = concatenate([flat1, flat2, flat3])
 
 
 #Attention layer
@@ -246,8 +267,7 @@ sent_representation = Lambda(lambda xin: keras.backend.sum(xin, axis=-2), output
 
 #Dense final layer for classification
 probabilities = Dense(num_classes, activation='softmax')(x)
-#Dense final layer for classification
-#probabilities = Dense(num_classes, activation='softmax')(merge)
+
 if loss == 'bin_loss':
     bins_K = variable(value=bins)
 
@@ -275,7 +295,7 @@ def bin_loss(y_true, y_pred):
 #Model: define inputs and outputs
 model = Model(inputs = [in_1, in_2], outputs = out_vals) #probabilities)#
 opt = optimizers.Adam(clipnorm=1., lr = lrate) #remove clipnorm and add loss penalty - clipnorm works better
-model.compile(loss=bin_loss,
+model.compile(loss=loss,
               optimizer=opt)
 
 
@@ -283,7 +303,7 @@ model.compile(loss=bin_loss,
 if find_lr == True:
   lr_finder = LRFinder(model)
 
-  X_train = [X1_train, X2_train]
+  X_train = [X1_train, X2_train, X3_train]
   lr_finder.find(X_train, y_train, start_lr=0.00000001, end_lr=1, batch_size=batch_size, epochs=2)
   losses = lr_finder.losses
   lrs = lr_finder.lrs
@@ -329,18 +349,10 @@ with open(out_dir+"model.json", "w") as json_file:
     json_file.write(model_json)
 
 #Fit model
-model.fit(x = [X1_train, X2_train],
+model.fit(x = [X1_train, X2_train, X3_train],
             y = y_train,
             batch_size = batch_size,
             epochs=num_epochs,
-            validation_data = [[X1_test, X2_test], y_test],
+            validation_data = [[X1_test, X2_test, X3_test], y_test],
             shuffle=True, #Dont feed continuously
             callbacks=callbacks)
-
-
-#Convert binned predictions to binary
-pred = model.predict([X1_test, X2_test])
-true = y_test
-np.save(out_dir+'true.npy', true)
-np.save(out_dir+'pred.npy', pred)
-pdb.set_trace()

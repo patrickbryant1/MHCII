@@ -188,11 +188,10 @@ alpha = int(net_params['alpha'])
 batch_size = int(net_params['batch_size'])
 kernel_size =  int(net_params['kernel_size']) #Should probably vary this also #The length of the conserved part that should bind to the binding grove
 find_lr = int(net_params['find_lr']) #lr opt
-max_lr = int(net_params['max_lr']) #lr opt
+max_lr = float(net_params['max_lr']) #lr opt
 
 #Attention size
-attention_size = filters*(37-kernel_size+1)+filters*(94-kernel_size+1)
-
+attention_size = filters*(37-kernel_size+1)+filters*(94-kernel_size-dilation_rate)
 #loss
 loss = 'bin_loss'#'categorical_crossentropy'
 #LR schedule

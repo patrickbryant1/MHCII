@@ -181,7 +181,7 @@ num_classes = bins.size #add +1 if categorical
 kernel_size =  3 #Should probably vary this also #The length of the conserved part that should bind to the binding grove
 dilation_rate = 2
 #Variable params
-filters =  10#int(net_params['filters']) # Dimension of the embedding vector.
+filters =  50#int(net_params['filters']) # Dimension of the embedding vector.
 batch_size = 32 #int(net_params['batch_size'])
 
 #Attention size

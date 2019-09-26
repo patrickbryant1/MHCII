@@ -12,8 +12,8 @@ filters = [10,30,60]
 dilation_rate = [3,6]
 alpha = [5,10,15]
 batch_size=[16,32,48]
-max_lr = 0.01
-find_lr = 1
+max_lr = 0.0001
+find_lr = 0
 
 for s in step_size:
 	for c in num_cycles:
